@@ -12,29 +12,35 @@ void tearDown(void) {
 }
 
 
-void test_cmd_parse2(void)
-{
-     //The string we want to parse from the user.
+void test_cmd_parse2(void) {
+     // The string we want to parse from the user
      //foo -v
-     char *stng = (char*)malloc(sizeof(char)*7);
+     char *stng = (char*)malloc(sizeof(char) * 7);
      strcpy(stng, "foo -v");
-     char **actual = cmd_parse(stng);
-     //construct our expected output
+     char **actual = cmd_parse(stng); 
+
+     // Construct our expected output
      size_t n = sizeof(char*) * 6;
-     char **expected = (char**) malloc(sizeof(char*) *6);
-     memset(expected,0,n);
-     expected[0] = (char*)malloc(sizeof(char)*4);
-     expected[1] = (char*)malloc(sizeof(char)*3);
+     char **expected = (char**) malloc(sizeof(char*) * 6);
+     memset(expected, 0, n);
+     expected[0] = (char*)malloc(sizeof(char) * 4);
+     expected[1] = (char*)malloc(sizeof(char) * 3);
      expected[2] = (char*)NULL;
 
      strcpy(expected[0], "foo");
      strcpy(expected[1], "-v");
-     TEST_ASSERT_EQUAL_STRING(expected[0],actual[0]);
-     TEST_ASSERT_EQUAL_STRING(expected[1],actual[1]);
+     TEST_ASSERT_EQUAL_STRING(expected[0], actual[0]);
+     TEST_ASSERT_EQUAL_STRING(expected[1], actual[1]);
      TEST_ASSERT_FALSE(actual[2]);
      free(expected[0]);
      free(expected[1]);
      free(expected);
+
+     // Free the memory allocated by cmd_parse
+     cmd_free(actual);  // Free actual and its tokens
+
+     // Free the stng string
+     free(stng);
 }
 
 void test_cmd_parse(void)
@@ -161,6 +167,7 @@ void test_ch_dir_root(void)
 
 int main(void) {
   UNITY_BEGIN();
+  
   RUN_TEST(test_cmd_parse);
   RUN_TEST(test_cmd_parse2);
   RUN_TEST(test_trim_white_no_whitespace);
