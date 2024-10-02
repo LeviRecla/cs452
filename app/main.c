@@ -13,6 +13,12 @@
 
 #define MAX_JOBS 1024
 
+
+/**
+ * Shell program driver class. This class is responsible for managing the shell
+ * @author Levi Recla
+ * @date 10/01/2024
+ */
 //Defines the status of a job
 typedef enum { RUNNING, DONE } job_status_t;
 

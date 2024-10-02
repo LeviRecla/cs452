@@ -13,6 +13,13 @@
 #include <termios.h>
 #include <signal.h>
 
+
+/**
+ * This class defines the methods used to manage the shell
+ * @author Levi Recla
+ * @date 10/01/2024
+ */
+
   /**
    * @brief Set the shell prompt. This function will attempt to load a prompt
    * from the requested environment variable, if the environment variable is
@@ -42,10 +49,6 @@ char *get_prompt(const char *env) {
 
     return prompt;
 }
-
-
-
-
 
   /**
    * Changes the current working directory of the shell. Uses the linux system
