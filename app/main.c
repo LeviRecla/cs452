@@ -1,224 +1,224 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
+#include <pthread.h>
 #include <unistd.h>
-#include <string.h>
 #include <stdbool.h>
-#include <signal.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <readline/readline.h>
-#include <readline/history.h>
+#include <time.h>
+#include <sys/time.h> /* for gettimeofday system call */
 #include "../src/lab.h"
 
-#define MAX_JOBS 1024
+#define UNUSED(x) (void)x
+#define MAX_C 8           /* Maximum number of consumer threads */
+#define MAX_P 8           /* Maximum number of producer threads */
+#define MAX_SLEEP 1000000 /* maximum time a thread can sleep in nanoseconds*/
 
+static bool delay = false;
+
+double getMilliSeconds()
+{
+     struct timeval now;
+     gettimeofday(&now, (struct timezone *)0);
+     return (double)now.tv_sec * 1000.0 + now.tv_usec / 1000.0;
+}
+
+/*Track the total items produced and consumed*/
+static struct
+{
+     unsigned int num;
+     pthread_mutex_t lock;
+} numproduced = {0, PTHREAD_MUTEX_INITIALIZER},
+  numconsumed = {0, PTHREAD_MUTEX_INITIALIZER};
+
+/*Shared queue that producers and consumers will access*/
+static queue_t pc_queue;
 
 /**
- * Shell program driver class. This class is responsible for managing the shell
- * @author Levi Recla
- * @date 10/01/2024
+ * Produces items at a random interval. Exits once it has produced
+ * the correct number of items.
  */
-//Defines the status of a job
-typedef enum { RUNNING, DONE } job_status_t;
+static void *producer(void *args)
+{
 
-//Defines a job with a process ID, command, status, and whether it has been reported
-struct job {
-    int id;               // Job number
-    pid_t pid;            // Process ID
-    char *command;        // Command line
-    job_status_t status;  // Job status (RUNNING or DONE)
-    bool reported;        // Whether the job's DONE status has been reported via 'jobs' command
-};
+     int num = *((int *)args);
+     //pthread_t tid = pthread_self();
+     unsigned int seedp = 0;
+     struct timespec s = {0, 0};
+     int *itm = NULL;
 
-struct shell sh;            // Declare the shell structure
-struct job jobs[MAX_JOBS];  // Array to keep track of background jobs
-int job_count = 0;          // Counter for job IDs
+     // fprintf(stderr, "Producer thread: %ld - producing %d items\n", tid, num);
+     for (int i = 0; i < num; i++)
+     {
+          if (delay)
+          {
+               /*simulate producing the item*/
+               s.tv_nsec = (rand_r(&seedp) % MAX_SLEEP);
+               nanosleep(&s, NULL);
+          }
+
+          itm = (int *)malloc(sizeof(int));
+          *itm = i;
+          // Put the item into the queue
+          enqueue(pc_queue, itm);
+
+          // Update counters for testing purposes
+          pthread_mutex_lock(&numproduced.lock);
+          numproduced.num++;
+          pthread_mutex_unlock(&numproduced.lock);
+     }
+     // fprintf(stderr, "Producer thread: %ld - Done producing!\n", tid);
+     pthread_exit(NULL);
+}
 
 /**
- * @brief Parse command line args from the user when the shell was launched
- *
- * @param argc Number of args
- * @param argv The arg array
+ * Consumes items.
  */
-int main(int argc, char *argv[]) {
+static void *consumer(void *args)
+{
+     UNUSED(args);
+     //pthread_t tid = pthread_self();
+     unsigned int seedp = 0;
+     struct timespec s = {0, 0};
+     int *itm = NULL;
+     // fprintf(stderr, "Consumer thread: %ld\n", tid);
 
-    //Parse command line args
-    parse_args(argc, argv);
+     while (true)
+     {
+          if (delay)
+          {
+               /*simulate producing the item*/
+               s.tv_nsec = (rand_r(&seedp) % MAX_SLEEP);
+               nanosleep(&s, NULL);
+          }
 
-    char *line;
-    char **cmd;
+          itm = (int *)dequeue(pc_queue);
+          if (itm)
+          {
+               free(itm);
+               itm = NULL;
+               // Update counters for testing purposes
+               pthread_mutex_lock(&numconsumed.lock);
+               numconsumed.num++;
+               pthread_mutex_unlock(&numconsumed.lock);
+          }
+          else
+          {
+               // If the queue is implemented correctly we should not
+               // get a NULL item during normal operation. It is possible to
+               // get a NULL item AFTER shutdown has been called which is fine
+               // because we are just cleaning up all the items.
+               if (!is_shutdown(pc_queue))
+               {
+                    fprintf(stderr, "ERROR: Got a null item when queue was not shutdown!\n");
+               }
+               break;
+          }
+     }
+     // fprintf(stderr, "Consumer Thread: %ld - Done consuming!\n", tid);
+     pthread_exit(NULL);
+}
 
-    sh_init(&sh);     // Initialize the shell
+static void usage(char *n)
+{
+     fprintf(stderr, "Usage: %s [-c num consumer] [-p num producer] [-i num items] [-s queue size] <-d introduce delay>\n", n);
+     fprintf(stderr, "-d will introduce a random delay between consumer and producer");
+     exit(EXIT_FAILURE);
+}
 
-    using_history();  // Initialize history
+int main(int argc, char *argv[])
+{
+     int nump = 1;       /*total number of producers*/
+     int numc = 1;       /*total number of consumers*/
+     int numitems = 10;  /*total number of items to produce per thread*/
+     int queue_size = 5; /*The default size of the queue*/
+     int c;
 
-    // Get the prompt from the environment or fallback to default
-    sh.prompt = get_prompt("MY_PROMPT");
+     pthread_t producers[MAX_P];
+     pthread_t consumers[MAX_C];
 
-    // Check if prompt is NULL
-    if (sh.prompt == NULL) {
-        fprintf(stderr, "Error: prompt is NULL\n");
-        exit(1);
-    }
+     while ((c = getopt(argc, argv, "c:p:i:s:dh")) != -1)
+          switch (c)
+          {
+          case 'c':
+               numc = atoi(optarg);
+               break;
+          case 'p':
+               nump = atoi(optarg);
+               ;
+               break;
+          case 'i':
+               numitems = atoi(optarg);
+               break;
+          case 's':
+               queue_size = atoi(optarg);
+               break;
+          case 'd':
+               delay = true;
+               break;
+          case 'h':
+               usage(argv[0]);
+               break;
+          default: /* ? */
+               usage(argv[0]);
+          }
+     if (numc > MAX_C)
+          numc = MAX_C;
+     if (nump > MAX_P)
+          nump = MAX_P;
 
-    // Shell loop to get user input and parse it
-    while (1) {
-        // Check for completed background jobs
-        for (int i = 0; i < job_count; i++) {
-            if (jobs[i].status == RUNNING) {
-                int status;
-                pid_t result = waitpid(jobs[i].pid, &status, WNOHANG);
-                if (result == -1) {
-                    perror("waitpid");
-                } else if (result > 0) {
-                    // Background job has completed
-                    jobs[i].status = DONE;
-                    jobs[i].reported = false;
-                    printf("[%d] Done %s\n", jobs[i].id, jobs[i].command);
-                }
-            }
-        }
+     int per_thread = numitems / nump;
+     fprintf(stderr, "Simulating %d producers %d consumers with %d items per thread and a queue size of %d\n", nump, numc, per_thread, queue_size);
+     // Start our timing
+     double end = 0;
+     double start = getMilliSeconds();
 
-        line = readline(sh.prompt);  // Readline with the prompt
+     // Initialize the queue for usage
+     pc_queue = queue_init(queue_size);
+     /*Create the producer threads*/
+     for (int i = 0; i < nump; i++)
+     {
+          pthread_create(&producers[i], NULL, producer, (void *)&per_thread);
+     }
 
-        if (line == NULL) {  // Handle EOF (Ctrl+D)
-            printf("\n");
-            break;
-        }
+     fprintf(stderr, "Creating %d consumer threads\n", numc);
+     /*Create the consumer threads*/
+     for (int i = 0; i < numc; i++)
+     {
+          pthread_create(&consumers[i], NULL, consumer, (void *)NULL);
+     }
 
-        if (line && *line) {
-            add_history(line);  // Add the line to history
-        }
+     /*Wait for all the the producer threads to finish*/
+     for (int i = 0; i < nump; i++)
+     {
+          pthread_join(producers[i], NULL);
+     }
 
-        // Detect if the command is to be run in the background
-        bool is_background = false;
-        size_t line_length = strlen(line);
-        if (line_length > 0) {
-            // Remove trailing whitespace
-            while (line_length > 0 && isspace((unsigned char)line[line_length - 1])) {
-                line[--line_length] = '\0';
-            }
+     // Once all the producers are finished we set a flag so the consumer thread can finish up
+     // Once shutdown is called your queue should drain all remaining items and be read for
+     // destruction!
+     queue_shutdown(pc_queue);
 
-            // Check for '&' at the end
-            if (line_length > 0 && line[line_length - 1] == '&') {
-                is_background = true;
-                line[--line_length] = '\0';  // Remove '&' from the line
+     /*Wait for all the the consumer threads to finish*/
+     for (int i = 0; i < numc; i++)
+     {
+          pthread_join(consumers[i], NULL);
+     }
 
-                // Remove any trailing whitespace after removing '&'
-                while (line_length > 0 && isspace((unsigned char)line[line_length - 1])) {
-                    line[--line_length] = '\0';
-                }
-            }
-        }
+     if (numproduced.num != numconsumed.num)
+     {
+          fprintf(stderr, "ERROR! produced != consumed\n");
+          abort();
+     }
+     fprintf(stderr, "Queue is empty:%s\n", is_empty(pc_queue) ? "true" : "false");
+     fprintf(stderr, "Total produced:%d\n", numproduced.num);
+     fprintf(stderr, "Total consumed:%d\n", numconsumed.num);
 
-        // Parse the command
-        cmd = cmd_parse(line);
-        if (cmd != NULL && cmd[0] != NULL) {
-            if (strcmp(cmd[0], "exit") == 0) {
-                cmd_free(cmd);
-                free(line);
-                break;  // Exit the shell loop on "exit"
-            } else if (strcmp(cmd[0], "jobs") == 0) {
-                // Handle 'jobs' command here
-                for (int i = 0; i < job_count; i++) {
-                    if (jobs[i].status == RUNNING) {
-                        printf("[%d] %d Running %s &\n", jobs[i].id, jobs[i].pid, jobs[i].command);
-                    } else if (jobs[i].status == DONE && !jobs[i].reported) {
-                        printf("[%d] Done    %s &\n", jobs[i].id, jobs[i].command);
-                        jobs[i].reported = true;  // Mark as reported via 'jobs' command
-                    }
-                }
-                // Remove jobs that are DONE and reported
-                int shift = 0;
-                for (int i = 0; i < job_count; i++) {
-                    if (jobs[i].status == DONE && jobs[i].reported) {
-                        // Free the command string
-                        free(jobs[i].command);
-                        shift++;
-                    } else if (shift > 0) {
-                        // Shift the job down in the array
-                        jobs[i - shift] = jobs[i];
-                    }
-                }
-                job_count -= shift;
-            } else if (!do_builtin(&sh, cmd)) {
-                // Execute external command
-                pid_t pid = fork();
-                if (pid == -1) {
-                    // Fork failed
-                    perror("fork");
-                } else if (pid == 0) {
-                    // Child process
-                    pid_t child_pid = getpid();
+     // Free up all the stuff we allocated
+     queue_destroy(pc_queue);
 
-                    // Put the child in its own process group
-                    if (setpgid(child_pid, child_pid) < 0) {
-                        perror("setpgid");
-                        exit(EXIT_FAILURE);
-                    }
+     // End our timing
+     end = getMilliSeconds();
+     // Print timing to standard out to graph
+     fprintf(stdout, " %f %d \n", end - start, numproduced.num);
 
-                    // If foreground process, take control of the terminal
-                    if (!is_background) {
-                        tcsetpgrp(sh.shell_terminal, child_pid);
-                    }
-
-                    // Reset signals to default in the child
-                    signal(SIGINT, SIG_DFL);
-                    signal(SIGQUIT, SIG_DFL);
-                    signal(SIGTSTP, SIG_DFL);
-                    signal(SIGTTIN, SIG_DFL);
-                    signal(SIGTTOU, SIG_DFL);
-
-                    execvp(cmd[0], cmd);
-                    // If execvp returns, an error occurred
-                    fprintf(stderr, "Error: Command not found: %s\n", cmd[0]);
-                    exit(EXIT_FAILURE);
-                } else {
-                    // Parent process
-
-                    // Assign job ID and store background job info
-                    if (is_background) {
-                        int job_id = ++job_count;
-                        if (job_id > MAX_JOBS) {
-                            fprintf(stderr, "Error: Maximum number of background jobs reached.\n");
-                            job_count--;
-                        } else {
-                            jobs[job_id - 1].id = job_id;
-                            jobs[job_id - 1].pid = pid;
-                            jobs[job_id - 1].command = strdup(line);  // Store the original command
-                            jobs[job_id - 1].status = RUNNING;
-                            jobs[job_id - 1].reported = false;
-                            printf("[%d] %d %s &\n", job_id, pid, jobs[job_id - 1].command);
-                        }
-                    } else {
-                        // Wait for the child process to complete
-                        int status;
-                        pid_t wpid;
-
-                        // Wait for foreground process
-                        do {
-                            wpid = waitpid(pid, &status, WUNTRACED);
-                            if (wpid == -1) {
-                                perror("waitpid");
-                                break;
-                            }
-                        } while (!WIFEXITED(status) && !WIFSIGNALED(status));
-
-                        // Return control of the terminal to the shell
-                        tcsetpgrp(sh.shell_terminal, sh.shell_pgid);
-
-                        // Restore shell's terminal settings
-                        tcgetattr(sh.shell_terminal, &sh.shell_tmodes);
-                    }
-                }
-            }
-            cmd_free(cmd);  // Free the parsed command
-        }
-        free(line);  // Free the input line returned by readline
-    }
-
-    free(sh.prompt);  // Free the dynamically allocated prompt
-
-    return 0;
+     return 0;
 }
