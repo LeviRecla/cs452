@@ -1,217 +1,170 @@
+#include <stdlib.h>
+#include <sys/time.h> /* for gettimeofday system call */
 #include "lab.h"
-#include <pthread.h>
-#include <stdio.h>
 
 /**
- * Definition of the queue structure
+ * @brief Standard insertion sort that is faster than merge sort for small array's
+ *
+ * @param A The array to sort
+ * @param p The starting index
+ * @param r The ending index
  */
-struct queue {
-    //Array to hold the data
-    void **buffer;
-    //Maximum capacity of the queue and number of elements        
-    int capacity;            
-    int size; 
+static void insertion_sort(int A[], int p, int r)
+{
+  int j;
 
-    // Index of the front and rear elements                  
-    int front;
-    int rear;
-
-    // Shutdown flag
-    bool shutdown;
-
-    // Mutex for thread synchronization
-    pthread_mutex_t lock;
-
-    // Condition variables for blocking when the queue is full and empty       
-    pthread_cond_t not_full;  
-    pthread_cond_t not_empty;
-};
-
-/**
- * Initialize a new queue
- * @param capacity the maximum capacity of the queue
- */
-queue_t queue_init(int capacity) {
-    if (capacity <= 0) {
-        return NULL; // Invalid capacity
+  for (j = p + 1; j <= r; j++)
+    {
+      int key = A[j];
+      int i = j - 1;
+      while ((i > p - 1) && (A[i] > key))
+        {
+	  A[i + 1] = A[i];
+	  i--;
+        }
+      A[i + 1] = key;
     }
-
-    // Allocate memory for the queue structure
-    queue_t q = malloc(sizeof(struct queue));
-    if (!q) {
-        perror("Failed to allocate queue");
-        return NULL;
-    }
-
-    // Allocate memory for the buffer array
-    q->buffer = malloc(sizeof(void *) * capacity);
-    if (!q->buffer) {
-        perror("Could not allocate buffer");
-        free(q);
-        return NULL;
-    }
-
-    // Initialize the queue structure
-    q->capacity = capacity;
-    q->size = 0;
-    q->front = 0;
-    q->rear = 0;
-    q->shutdown = false;
-
-    // Initialize the mutex for the queue
-    if (pthread_mutex_init(&q->lock, NULL) != 0) {
-        perror("Mutex was not initialized");
-        //Free the buffer and the queue structure
-        free(q->buffer);
-        free(q);
-        return NULL;
-    }
-
-    // Initialize the condition variables for the queue
-    if (pthread_cond_init(&q->not_full, NULL) != 0 ||
-        pthread_cond_init(&q->not_empty, NULL) != 0) {
-        perror("Conditional initialization failed");
-        // Destroy the mutex
-        pthread_mutex_destroy(&q->lock);
-        //Free the buffer and the queue structure
-        free(q->buffer);
-        free(q);
-        return NULL;
-    }
-
-    return q;
-}
-
-/**
- * Frees all memory and related data signals all waiting threads.
- * @param q a queue to free
- */
-void queue_destroy(queue_t q) {
-    if (q == NULL) {
-        return; // Nothing to destroy
-    }
-
-    pthread_mutex_lock(&q->lock);
-
-    // Set shutdown to true if not already set
-    if (!q->shutdown) {
-        q->shutdown = true;
-        pthread_cond_broadcast(&q->not_full);
-        pthread_cond_broadcast(&q->not_empty);
-    }
-
-    pthread_mutex_unlock(&q->lock);
-
-    // Destroy mutex and condition variables
-    pthread_mutex_destroy(&q->lock);
-    pthread_cond_destroy(&q->not_full);
-    pthread_cond_destroy(&q->not_empty);
-
-    // Free the buffer array and the queue structure
-    free(q->buffer);
-    free(q);
-}
-
-/**
- * Adds an element to the back of the queue
- * @param q the queue
- * @param data the data to add
- */
-void enqueue(queue_t q, void *data) {
-    //Lock the queue
-    pthread_mutex_lock(&q->lock);
-
-//Wait while the queue is full and not shutdown
-    while (q->size == q->capacity && !q->shutdown) {
-        pthread_cond_wait(&q->not_full, &q->lock);
-    }
-
-    if (q->shutdown) {
-        pthread_mutex_unlock(&q->lock);
-        return; // Or handle shutdown appropriately
-    }
-
-    //add item to the queue
-    q->buffer[q->rear] = data;
-    q->rear = (q->rear + 1) % q->capacity;
-    q->size++;
-
-    //Signal any waiting threads
-    pthread_cond_signal(&q->not_empty);
-    //Unlock the queue mutex
-    pthread_mutex_unlock(&q->lock);
-}
-
-/**
- * Removes the first element in the queue.
- * @param q the queue
- */
-void *dequeue(queue_t q) {
-    pthread_mutex_lock(&q->lock);
-
-    // Wait while the queue is empty and not shutdown
-    while (q->size == 0 && !q->shutdown) {
-        pthread_cond_wait(&q->not_empty, &q->lock);
-    }
-
-    // If queue is empty and shutdown, return NULL
-    if (q->size == 0 && q->shutdown) {
-        pthread_mutex_unlock(&q->lock);
-        return NULL;
-    }
-
-    // Remove item from the queue
-    void *data = q->buffer[q->front];
-    q->front = (q->front + 1) % q->capacity;
-    q->size--;
-
-    // Signal any waiting threads
-    pthread_cond_signal(&q->not_full);
-    pthread_mutex_unlock(&q->lock);
-    return data;
 }
 
 
+void mergesort_s(int A[], int p, int r)
+{
+  if (r - p + 1 <=  INSERTION_SORT_THRESHOLD)
+    {
+      insertion_sort(A, p, r);
+    }
+  else
+    {
+      int q = (p + r) / 2;
+      mergesort_s(A, p, q);
+      mergesort_s(A, q + 1, r);
+      merge_s(A, p, q, r);
+    }
 
+}
 
-/**
- * Set the shutdown flag in the queue so all threads can
- * complete and exit properly
- * @param q The queue
- */
-void queue_shutdown(queue_t q) {
-    //Lock the queue
-    pthread_mutex_lock(&q->lock);
-    q->shutdown = true;
-    //Wake up all threads waiting on the not_full and not_empty condition variables
-    pthread_cond_broadcast(&q->not_full);
-    pthread_cond_broadcast(&q->not_empty);
-    //Unlock the queue mutex
-    pthread_mutex_unlock(&q->lock);
+void merge_s(int A[], int p, int q, int r)
+{
+  int *B = (int *)malloc(sizeof(int) * (r - p + 1));
+
+  int i = p;
+  int j = q + 1;
+  int k = 0;
+  int l;
+
+  /* as long as both lists have unexamined elements */
+  /*  this loop keeps executing. */
+  while ((i <= q) && (j <= r))
+    {
+      if (A[i] < A[j])
+        {
+	  B[k] = A[i];
+	  i++;
+        }
+      else
+        {
+	  B[k] = A[j];
+	  j++;
+        }
+      k++;
+    }
+
+  /* now only at most one list has unprocessed elements. */
+  if (i <= q)
+    {
+      /* copy remaining elements from the first list */
+      for (l = i; l <= q; l++)
+        {
+	  B[k] = A[l];
+	  k++;
+        }
+    }
+  else
+    {
+      /* copy remaining elements from the second list */
+      for (l = j; l <= r; l++)
+        {
+	  B[k] = A[l];
+	  k++;
+        }
+    }
+
+  /* copy merged output from array B back to array A */
+  k = 0;
+  for (l = p; l <= r; l++)
+    {
+      A[l] = B[k];
+      k++;
+    }
+
+  free(B);
+}
+
+double getMilliSeconds()
+{
+  struct timeval now;
+  gettimeofday(&now, (struct timezone *)0);
+  return (double)now.tv_sec * 1000.0 + now.tv_usec / 1000.0;
 }
 
 
-/**
- * Returns true is the queue is empty
- * @param q the queue
- */
-bool is_empty(queue_t q) {
-    bool empty;
-    pthread_mutex_lock(&q->lock);
-    empty = (q->size == 0);
-    pthread_mutex_unlock(&q->lock);
-    return empty;
+/* Insertion sort and other helper functions */
+
+void *parallel_mergesort(void *args)
+{
+    struct parallel_args *pargs = (struct parallel_args *)args;
+    mergesort_s(pargs->A, pargs->start, pargs->end);
+    return NULL;
 }
 
-/**
- * Returns true if the queue is shutdown
- * @param q the queue
- */
-bool is_shutdown(queue_t q) {
-    bool shutdown_status;
-    pthread_mutex_lock(&q->lock);
-    shutdown_status = q->shutdown;
-    pthread_mutex_unlock(&q->lock);
-    return shutdown_status;
-}
+void mergesort_mt(int *A, int n, int num_threads)
+{
+    // Ensure the number of threads does not exceed MAX_THREADS
+    if (num_threads > MAX_THREADS)
+        num_threads = MAX_THREADS;
+    if (num_threads < 1)
+        num_threads = 1;
 
+    // Allocate memory for thread arguments
+    struct parallel_args *args = malloc(sizeof(struct parallel_args) * num_threads);
+
+    int chunk_size = n / num_threads;
+    int start = 0;
+
+    // Create threads to sort each chunk
+    for (int i = 0; i < num_threads; i++)
+    {
+        args[i].A = A;
+        args[i].start = start;
+
+        // Last thread takes the remaining elements
+        if (i == num_threads - 1)
+            args[i].end = n - 1;
+        else
+            args[i].end = start + chunk_size - 1;
+
+        // Create a new thread to sort the chunk
+        pthread_create(&args[i].tid, NULL, parallel_mergesort, &args[i]);
+
+        // Update the start index for the next chunk
+        start = args[i].end + 1;
+    }
+
+    // Wait for all threads to finish sorting
+    for (int i = 0; i < num_threads; i++)
+    {
+        pthread_join(args[i].tid, NULL);
+    }
+
+    // Merge the sorted chunks
+    for (int i = 1; i < num_threads; i++)
+    {
+        int p = args[0].start;
+        int q = args[i - 1].end;
+        int r = args[i].end;
+        merge_s(A, p, q, r);
+    }
+
+    // Free the allocated memory
+    free(args);
+}
