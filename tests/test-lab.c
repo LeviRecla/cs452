@@ -133,6 +133,38 @@ void test_buddy_init(void)
     }
 }
 
+/**
+ * Test allocating two small blocks and then freeing them.
+ * After freeing both, we should get back a fully available pool.
+ */
+void test_buddy_alloc_free_two_blocks(void)
+{
+  fprintf(stderr, "->Test allocating and freeing two small blocks\n");
+  struct buddy_pool pool;
+  size_t size = (size_t)1 << MIN_K; 
+  buddy_init(&pool, size);
+
+  // Allocate two small blocks
+  void *block1 = buddy_malloc(&pool, 32);  // small allocation
+  assert(block1 != NULL && "First allocation failed");
+
+  void *block2 = buddy_malloc(&pool, 64);  // another small allocation
+  assert(block2 != NULL && "Second allocation failed");
+
+  // Free both blocks
+  buddy_free(&pool, block1);
+  buddy_free(&pool, block2);
+
+  // After freeing all blocks, the pool should be full again
+  check_buddy_pool_full(&pool);
+
+  buddy_destroy(&pool);
+  fprintf(stderr, "->Two-block alloc/free test passed\n");
+}
+
+
+
+
 
 int main(void) {
   time_t t;
@@ -145,5 +177,6 @@ int main(void) {
   RUN_TEST(test_buddy_init);
   RUN_TEST(test_buddy_malloc_one_byte);
   RUN_TEST(test_buddy_malloc_one_large);
+  RUN_TEST(test_buddy_alloc_free_two_blocks);
 return UNITY_END();
 }
